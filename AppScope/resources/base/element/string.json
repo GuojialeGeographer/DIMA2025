@@ -1,0 +1,12 @@
+{
+  "string": [
+    {
+      "name": "app_name",
+      "value": "CityZen"
+    },
+    {
+      "name": "app_description",
+      "value": "Urban well-being application that combines environmental quality assessment with AI-powered exercise recommendations"
+    }
+  ]
+}

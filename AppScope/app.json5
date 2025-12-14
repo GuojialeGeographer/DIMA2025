@@ -1,0 +1,14 @@
+{
+  "app": {
+    "bundleName": "com.cityzen.app",
+    "vendor": "CityZen Team",
+    "versionCode": 1000000,
+    "versionName": "1.0.0",
+    "icon": "$media:app_icon",
+    "label": "$string:app_name",
+    "description": "$string:app_description",
+    "minAPIVersion": 18,
+    "targetAPIVersion": 18,
+    "apiReleaseType": "Release"
+  }
+}

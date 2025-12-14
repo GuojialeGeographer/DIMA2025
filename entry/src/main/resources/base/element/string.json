@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "CityZen main module for urban well-being and environmental quality assessment"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "CityZen main ability for environmental quality tracking and AI-powered exercise recommendations"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "CityZen"
+    },
+    {
+      "name": "location_permission_reason",
+      "value": "CityZen needs location access to provide environmental quality data and exercise recommendations for your current area"
+    },
+    {
+      "name": "internet_permission_reason",
+      "value": "CityZen needs internet access to fetch real-time weather data and AI-powered exercise recommendations"
+    }
+  ]
+}

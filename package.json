@@ -1,0 +1,23 @@
+{
+  "name": "cityzen-app",
+  "version": "1.0.0",
+  "description": "Urban well-being application for OpenHarmony/Oniro ecosystem",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Run tests using DevEco Studio test runner\"",
+    "build": "echo \"Build using DevEco Studio\"",
+    "clean": "echo \"Clean build artifacts\""
+  },
+  "keywords": [
+    "openharmony",
+    "arkts",
+    "urban-health",
+    "environmental-quality",
+    "ai-coach"
+  ],
+  "author": "CityZen Team",
+  "license": "MIT",
+  "devDependencies": {
+    "@ohos/hypium": "^1.0.6"
+  }
+}
