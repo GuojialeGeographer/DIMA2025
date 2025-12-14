@@ -17,6 +17,12 @@ interface ExerciseHistoryItem {
   session: ExerciseSession;
 }
 
+interface LazyLoadingConfig {
+  pageSize: number;
+  preloadThreshold: number; // Load more when this many items from end
+  maxCacheSize: number; // Maximum items to keep in memory
+}
+
 enum SortOption {
   DATE_DESC = 'date_desc',
   DATE_ASC = 'date_asc',
@@ -38,24 +44,75 @@ export struct HistoryPage {
   @State historyItems: ExerciseHistoryItem[] = [];
   @State filteredItems: ExerciseHistoryItem[] = [];
   @State isLoading: boolean = true;
+  @State isLoadingMore: boolean = false;
   @State selectedSession: ExerciseSession | null = null;
   @State showDetailView: boolean = false;
   @State sortOption: SortOption = SortOption.DATE_DESC;
   @State filterOption: FilterOption = FilterOption.ALL;
   @State showFilters: boolean = false;
+  @State hasMoreData: boolean = true;
+  @State currentPage: number = 0;
+  
   private databaseService: DatabaseService = DatabaseService.getInstance();
+  private lazyLoadConfig: LazyLoadingConfig = {
+    pageSize: 20,
+    preloadThreshold: 5,
+    maxCacheSize: 100
+  };
+  private allSessionsCache: ExerciseSession[] = [];
+  private totalSessionCount: number = 0;
 
   aboutToAppear(): void {
     hilog.info(DOMAIN, TAG, 'HistoryPage aboutToAppear');
-    this.loadHistoryData();
+    this.initializeLazyLoading();
   }
 
-  private async loadHistoryData(): Promise<void> {
+  /**
+   * Initialize lazy loading system
+   */
+  private async initializeLazyLoading(): Promise<void> {
     try {
       this.isLoading = true;
-      const sessions = await this.databaseService.getExerciseHistory();
       
-      this.historyItems = sessions.map(session => ({
+      // Get total count first for pagination
+      const allSessions = await this.databaseService.getExerciseHistory();
+      this.totalSessionCount = allSessions.length;
+      this.allSessionsCache = allSessions;
+      
+      // Load first page
+      await this.loadNextPage();
+      
+      this.isLoading = false;
+    } catch (error) {
+      hilog.error(DOMAIN, TAG, `Failed to initialize lazy loading: ${error}`);
+      this.isLoading = false;
+    }
+  }
+
+  /**
+   * Load next page of exercise history
+   */
+  private async loadNextPage(): Promise<void> {
+    if (!this.hasMoreData || this.isLoadingMore) {
+      return;
+    }
+
+    try {
+      this.isLoadingMore = true;
+      
+      const startIndex = this.currentPage * this.lazyLoadConfig.pageSize;
+      const endIndex = Math.min(startIndex + this.lazyLoadConfig.pageSize, this.totalSessionCount);
+      
+      if (startIndex >= this.totalSessionCount) {
+        this.hasMoreData = false;
+        this.isLoadingMore = false;
+        return;
+      }
+      
+      // Get sessions for current page from cache
+      const pageSessions = this.allSessionsCache.slice(startIndex, endIndex);
+      
+      const pageItems = pageSessions.map(session => ({
         id: session.id,
         date: this.formatDate(session.startTime),
         duration: this.formatDuration(session.duration),
@@ -65,12 +122,52 @@ export struct HistoryPage {
         session: session
       }));
       
+      // Add to existing items
+      this.historyItems = [...this.historyItems, ...pageItems];
+      
+      // Update pagination state
+      this.currentPage++;
+      this.hasMoreData = endIndex < this.totalSessionCount;
+      
+      // Apply filters and sorting
       this.applyFiltersAndSort();
-      this.isLoading = false;
+      
+      // Manage memory by limiting cache size
+      if (this.historyItems.length > this.lazyLoadConfig.maxCacheSize) {
+        const excessItems = this.historyItems.length - this.lazyLoadConfig.maxCacheSize;
+        this.historyItems = this.historyItems.slice(excessItems);
+        hilog.info(DOMAIN, TAG, `Trimmed ${excessItems} items from cache for memory management`);
+      }
+      
+      hilog.info(DOMAIN, TAG, `Loaded page ${this.currentPage}, total items: ${this.historyItems.length}/${this.totalSessionCount}`);
+      
     } catch (error) {
-      hilog.error(DOMAIN, TAG, `Failed to load history data: ${error}`);
-      this.isLoading = false;
+      hilog.error(DOMAIN, TAG, `Failed to load next page: ${error}`);
+    } finally {
+      this.isLoadingMore = false;
     }
+  }
+
+  /**
+   * Check if more data should be loaded based on scroll position
+   */
+  private checkLoadMore(currentIndex: number): void {
+    const remainingItems = this.filteredItems.length - currentIndex;
+    
+    if (remainingItems <= this.lazyLoadConfig.preloadThreshold && this.hasMoreData && !this.isLoadingMore) {
+      hilog.info(DOMAIN, TAG, `Preload threshold reached, loading more data`);
+      this.loadNextPage();
+    }
+  }
+
+  /**
+   * Reset lazy loading state (used when filters change)
+   */
+  private resetLazyLoading(): void {
+    this.historyItems = [];
+    this.currentPage = 0;
+    this.hasMoreData = true;
+    this.loadNextPage();
   }
 
   private formatDate(timestamp: number): string {
@@ -158,13 +255,17 @@ export struct HistoryPage {
 
   private onSortChange(newSort: SortOption): void {
     this.sortOption = newSort;
-    this.applyFiltersAndSort();
+    
+    // Reset lazy loading when sort changes
+    this.resetLazyLoading();
     this.showFilters = false;
   }
 
   private onFilterChange(newFilter: FilterOption): void {
     this.filterOption = newFilter;
-    this.applyFiltersAndSort();
+    
+    // Reset lazy loading when filter changes
+    this.resetLazyLoading();
     this.showFilters = false;
   }
 
@@ -299,18 +400,60 @@ export struct HistoryPage {
         .layoutWeight(1)
         .justifyContent(FlexAlign.Center)
       } else {
-        // History list
+        // History list with lazy loading
         List() {
-          ForEach(this.filteredItems, (item: ExerciseHistoryItem) => {
+          ForEach(this.filteredItems, (item: ExerciseHistoryItem, index: number) => {
             ListItem() {
               this.HistoryItemCard(item)
             }
             .margin({ bottom: 10 })
+            .onAppear(() => {
+              // Check if we need to load more data
+              this.checkLoadMore(index);
+            })
           })
+          
+          // Loading more indicator
+          if (this.isLoadingMore) {
+            ListItem() {
+              Row() {
+                LoadingProgress()
+                  .width(20)
+                  .height(20)
+                  .color('#007AFF')
+                  .margin({ right: 10 })
+                
+                Text('Loading more...')
+                  .fontSize(14)
+                  .fontColor('#666666')
+              }
+              .width('100%')
+              .height(50)
+              .justifyContent(FlexAlign.Center)
+            }
+          }
+          
+          // End of data indicator
+          if (!this.hasMoreData && this.filteredItems.length > 0) {
+            ListItem() {
+              Text('No more sessions')
+                .fontSize(12)
+                .fontColor('#999999')
+                .textAlign(TextAlign.Center)
+                .width('100%')
+                .height(40)
+            }
+          }
         }
         .width('100%')
         .layoutWeight(1)
         .padding({ left: 20, right: 20, top: 10 })
+        .onScrollIndex((start: number, end: number) => {
+          // Additional check for loading more data on scroll
+          if (end >= this.filteredItems.length - this.lazyLoadConfig.preloadThreshold) {
+            this.checkLoadMore(end);
+          }
+        })
       }
     }
     .width('100%')

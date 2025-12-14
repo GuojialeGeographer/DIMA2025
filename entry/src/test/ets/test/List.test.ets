@@ -9,6 +9,9 @@ import dashboardUIConsistencyTest from './DashboardUIConsistency.test';
 import dashboardFunctionalityTest from './DashboardFunctionality.test';
 import historyFunctionalityTest from './HistoryFunctionality.test';
 import errorHandlingTest from './ErrorHandling.test';
+import systemIntegrationTest from './SystemIntegration.test';
+import correctnessPropertiesTest from './CorrectnessProperties.test';
+import testValidationTest from './TestValidation.test';
 
 const TAG = 'ListTest';
 const DOMAIN = 0xFF00;
@@ -26,6 +29,11 @@ export default function testsuite() {
   dashboardFunctionalityTest();
   historyFunctionalityTest();
   errorHandlingTest();
+  
+  // Integration and system tests
+  testValidationTest();
+  systemIntegrationTest();
+  correctnessPropertiesTest();
   
   hilog.info(DOMAIN, TAG, '%{public}s', 'testsuite end');
 }

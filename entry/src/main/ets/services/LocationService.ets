@@ -18,6 +18,24 @@ export interface LocationChangeConfig {
 }
 
 /**
+ * Battery optimization configuration for location tracking
+ */
+export interface BatteryOptimizationConfig {
+  /** Enable adaptive location frequency based on movement */
+  adaptiveFrequency: boolean;
+  /** Reduce accuracy when stationary to save battery */
+  reduceAccuracyWhenStationary: boolean;
+  /** Maximum location requests per minute */
+  maxRequestsPerMinute: number;
+  /** Stationary detection threshold in meters */
+  stationaryThreshold: number;
+  /** Time to consider user stationary in milliseconds */
+  stationaryTimeThreshold: number;
+  /** Enable background location optimization */
+  backgroundOptimization: boolean;
+}
+
+/**
  * Default location change configuration
  */
 export const DEFAULT_LOCATION_CONFIG: LocationChangeConfig = {
@@ -27,7 +45,20 @@ export const DEFAULT_LOCATION_CONFIG: LocationChangeConfig = {
 };
 
 /**
+ * Default battery optimization configuration
+ */
+export const DEFAULT_BATTERY_CONFIG: BatteryOptimizationConfig = {
+  adaptiveFrequency: true,
+  reduceAccuracyWhenStationary: true,
+  maxRequestsPerMinute: 6, // Once every 10 seconds max
+  stationaryThreshold: 20, // 20 meters
+  stationaryTimeThreshold: 120000, // 2 minutes
+  backgroundOptimization: true
+};
+
+/**
  * Location service for handling GPS positioning and permission management
+ * Optimized for battery usage and performance
  */
 export class LocationService {
   private static instance: LocationService;
@@ -35,19 +66,29 @@ export class LocationService {
   private lastKnownLocation: LocationData | null = null;
   private locationChangeCallback: ((location: LocationData) => void) | null = null;
   private config: LocationChangeConfig;
+  private batteryConfig: BatteryOptimizationConfig;
   private errorHandler: ErrorHandler = ErrorHandler.getInstance();
   private logger = createLogger('LocationService');
+  
+  // Battery optimization state
+  private locationRequestCount: number = 0;
+  private lastRequestTime: number = 0;
+  private isStationary: boolean = false;
+  private stationaryStartTime: number = 0;
+  private locationHistory: LocationData[] = [];
+  private currentAccuracyMode: 'high' | 'medium' | 'low' = 'high';
 
-  private constructor(config: LocationChangeConfig = DEFAULT_LOCATION_CONFIG) {
+  private constructor(config: LocationChangeConfig = DEFAULT_LOCATION_CONFIG, batteryConfig: BatteryOptimizationConfig = DEFAULT_BATTERY_CONFIG) {
     this.config = config;
+    this.batteryConfig = batteryConfig;
   }
 
   /**
    * Get singleton instance of LocationService
    */
-  public static getInstance(config?: LocationChangeConfig): LocationService {
+  public static getInstance(config?: LocationChangeConfig, batteryConfig?: BatteryOptimizationConfig): LocationService {
     if (!LocationService.instance) {
-      LocationService.instance = new LocationService(config);
+      LocationService.instance = new LocationService(config, batteryConfig);
     }
     return LocationService.instance;
   }
@@ -99,17 +140,161 @@ export class LocationService {
   }
 
   /**
+   * Check if location request should be throttled for battery optimization
+   */
+  private shouldThrottleRequest(): boolean {
+    const now = Date.now();
+    const timeSinceLastRequest = now - this.lastRequestTime;
+    const minInterval = 60000 / this.batteryConfig.maxRequestsPerMinute; // Convert to milliseconds
+    
+    if (timeSinceLastRequest < minInterval) {
+      console.warn('LocationService: Request throttled for battery optimization');
+      return true;
+    }
+    
+    this.lastRequestTime = now;
+    this.locationRequestCount++;
+    
+    return false;
+  }
+
+  /**
+   * Determine optimal accuracy based on movement state
+   */
+  private getOptimalAccuracy(): geoLocationManager.LocationRequestPriority {
+    if (!this.batteryConfig.reduceAccuracyWhenStationary) {
+      return geoLocationManager.LocationRequestPriority.ACCURACY;
+    }
+    
+    if (this.isStationary) {
+      this.currentAccuracyMode = 'low';
+      return geoLocationManager.LocationRequestPriority.LOW_POWER;
+    } else if (this.locationHistory.length > 2) {
+      // Check movement speed to determine accuracy needs
+      const recentMovement = this.calculateRecentMovementSpeed();
+      
+      if (recentMovement < 1.0) { // Less than 1 m/s (walking speed)
+        this.currentAccuracyMode = 'medium';
+        return geoLocationManager.LocationRequestPriority.FIRST_FIX;
+      }
+    }
+    
+    this.currentAccuracyMode = 'high';
+    return geoLocationManager.LocationRequestPriority.ACCURACY;
+  }
+
+  /**
+   * Calculate recent movement speed for battery optimization
+   */
+  private calculateRecentMovementSpeed(): number {
+    if (this.locationHistory.length < 2) {
+      return 0;
+    }
+    
+    const recent = this.locationHistory.slice(-2);
+    const distance = this.calculateDistance(
+      recent[0].latitude, recent[0].longitude,
+      recent[1].latitude, recent[1].longitude
+    );
+    
+    const timeDiff = (recent[1].timestamp - recent[0].timestamp) / 1000; // Convert to seconds
+    
+    return timeDiff > 0 ? distance / timeDiff : 0;
+  }
+
+  /**
+   * Update stationary detection for battery optimization
+   */
+  private updateStationaryDetection(location: LocationData): void {
+    if (!this.batteryConfig.adaptiveFrequency) {
+      return;
+    }
+    
+    // Add to location history
+    this.locationHistory.push(location);
+    
+    // Keep only recent locations for analysis
+    const maxHistorySize = 10;
+    if (this.locationHistory.length > maxHistorySize) {
+      this.locationHistory = this.locationHistory.slice(-maxHistorySize);
+    }
+    
+    // Check if user is stationary
+    if (this.locationHistory.length >= 3) {
+      const recentLocations = this.locationHistory.slice(-3);
+      let maxDistance = 0;
+      
+      for (let i = 1; i < recentLocations.length; i++) {
+        const distance = this.calculateDistance(
+          recentLocations[0].latitude, recentLocations[0].longitude,
+          recentLocations[i].latitude, recentLocations[i].longitude
+        );
+        maxDistance = Math.max(maxDistance, distance);
+      }
+      
+      const wasStationary = this.isStationary;
+      this.isStationary = maxDistance < this.batteryConfig.stationaryThreshold;
+      
+      // Track stationary time
+      if (this.isStationary && !wasStationary) {
+        this.stationaryStartTime = Date.now();
+      } else if (!this.isStationary) {
+        this.stationaryStartTime = 0;
+      }
+      
+      console.info(`LocationService: Movement detection - Stationary: ${this.isStationary}, Max distance: ${maxDistance.toFixed(1)}m`);
+    }
+  }
+
+  /**
+   * Get adaptive time interval based on movement state
+   */
+  private getAdaptiveTimeInterval(): number {
+    if (!this.batteryConfig.adaptiveFrequency) {
+      return this.config.timeThreshold / 1000; // Convert to seconds
+    }
+    
+    const baseInterval = this.config.timeThreshold / 1000;
+    
+    if (this.isStationary) {
+      const stationaryTime = Date.now() - this.stationaryStartTime;
+      
+      if (stationaryTime > this.batteryConfig.stationaryTimeThreshold) {
+        // Increase interval significantly when stationary for a while
+        return Math.min(baseInterval * 4, 60); // Max 1 minute
+      } else {
+        // Moderate increase when recently stationary
+        return baseInterval * 2;
+      }
+    }
+    
+    // Normal interval when moving
+    return baseInterval;
+  }
+
+  /**
    * Get current GPS position
+   * Optimized for battery usage
    * @returns Promise<LocationData> - Current location data
    */
   public async getCurrentPosition(): Promise<LocationData> {
+    // Check throttling for battery optimization
+    if (this.shouldThrottleRequest()) {
+      // Return cached location if available and recent
+      const cached = this.getLastKnownLocation();
+      if (cached) {
+        return Promise.resolve(cached);
+      }
+    }
+
     return new Promise((resolve, reject) => {
       try {
         const requestInfo: geoLocationManager.CurrentLocationRequest = {
-          priority: geoLocationManager.LocationRequestPriority.FIRST_FIX,
+          priority: this.getOptimalAccuracy(),
           scenario: geoLocationManager.LocationRequestScenario.UNSET,
-          maxAccuracy: 100,
-          timeoutMs: 30000
+          maxAccuracy: this.currentAccuracyMode === 'low' ? 500 : 
+                      this.currentAccuracyMode === 'medium' ? 200 : 100,
+          timeoutMs: this.currentAccuracyMode === 'low' ? 15000 : 30000
         };
 
         geoLocationManager.getCurrentLocation(requestInfo, (err, location) => {
@@ -139,6 +324,10 @@ export class LocationService {
           }
 
           this.lastKnownLocation = locationData;
+          
+          // Update battery optimization state
+          this.updateStationaryDetection(locationData);
+          
           resolve(locationData);
         });
       } catch (error) {
@@ -158,10 +347,11 @@ export class LocationService {
       this.locationChangeCallback = callback;
 
       const requestInfo: geoLocationManager.LocationRequest = {
-        priority: geoLocationManager.LocationRequestPriority.ACCURACY,
+        priority: this.getOptimalAccuracy(),
         scenario: geoLocationManager.LocationRequestScenario.UNSET,
-        maxAccuracy: 100,
-        timeInterval: this.config.timeThreshold / 1000, // Convert to seconds
+        maxAccuracy: this.currentAccuracyMode === 'low' ? 500 : 
+                    this.currentAccuracyMode === 'medium' ? 200 : 100,
+        timeInterval: this.getAdaptiveTimeInterval(),
         distanceInterval: this.config.distanceThreshold
       };
 
@@ -185,6 +375,9 @@ export class LocationService {
           return;
         }
 
+        // Update battery optimization state
+        this.updateStationaryDetection(locationData);
+        
         // Check if location change is significant
         if (this.isSignificantLocationChange(locationData)) {
           this.lastKnownLocation = locationData;
@@ -334,5 +527,82 @@ export class LocationService {
    */
   public getConfig(): LocationChangeConfig {
     return { ...this.config };
+  }
+
+  /**
+   * Update battery optimization configuration
+   * @param config - New battery optimization configuration
+   */
+  public updateBatteryConfig(config: Partial<BatteryOptimizationConfig>): void {
+    this.batteryConfig = { ...this.batteryConfig, ...config };
+    console.info('LocationService: Battery optimization configuration updated');
+  }
+
+  /**
+   * Get current battery optimization configuration
+   * @returns BatteryOptimizationConfig - Current battery configuration
+   */
+  public getBatteryConfig(): BatteryOptimizationConfig {
+    return { ...this.batteryConfig };
+  }
+
+  /**
+   * Get battery optimization statistics
+   * @returns Battery optimization statistics
+   */
+  public getBatteryStats(): {
+    requestCount: number;
+    isStationary: boolean;
+    stationaryDuration: number;
+    currentAccuracyMode: string;
+    locationHistorySize: number;
+    averageRequestInterval: number;
+  } {
+    const stationaryDuration = this.isStationary && this.stationaryStartTime > 0 
+      ? Date.now() - this.stationaryStartTime 
+      : 0;
+
+    const averageInterval = this.locationRequestCount > 1 
+      ? (Date.now() - (this.lastRequestTime - (this.locationRequestCount - 1) * 10000)) / this.locationRequestCount
+      : 0;
+
+    return {
+      requestCount: this.locationRequestCount,
+      isStationary: this.isStationary,
+      stationaryDuration: stationaryDuration,
+      currentAccuracyMode: this.currentAccuracyMode,
+      locationHistorySize: this.locationHistory.length,
+      averageRequestInterval: averageInterval
+    };
+  }
+
+  /**
+   * Reset battery optimization state
+   */
+  public resetBatteryOptimization(): void {
+    this.locationRequestCount = 0;
+    this.lastRequestTime = 0;
+    this.isStationary = false;
+    this.stationaryStartTime = 0;
+    this.locationHistory = [];
+    this.currentAccuracyMode = 'high';
+    
+    console.info('LocationService: Battery optimization state reset');
+  }
+
+  /**
+   * Enable/disable battery optimization features
+   * @param enabled - Whether to enable battery optimization
+   */
+  public setBatteryOptimizationEnabled(enabled: boolean): void {
+    this.batteryConfig.adaptiveFrequency = enabled;
+    this.batteryConfig.reduceAccuracyWhenStationary = enabled;
+    this.batteryConfig.backgroundOptimization = enabled;
+    
+    if (!enabled) {
+      this.resetBatteryOptimization();
+    }
+    
+    console.info(`LocationService: Battery optimization ${enabled ? 'enabled' : 'disabled'}`);
   }
 }

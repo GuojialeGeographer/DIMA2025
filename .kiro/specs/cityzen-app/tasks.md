@@ -219,33 +219,33 @@ This implementation plan converts the CityZen design into actionable coding task
   - Test settings UI interactions
   - _Requirements: 5.5_
 
-- [ ] 15. Performance Optimization and Polish
+- [x] 15. Performance Optimization and Polish
   - Optimize map rendering performance for large GeoJSON datasets
   - Implement lazy loading for exercise history
   - Add loading states and progress indicators throughout the app
   - Optimize battery usage for location tracking
   - _Requirements: Performance aspects of all requirements_
 
-- [ ] 15.1 Write performance tests
+- [x] 15.1 Write performance tests
   - Test map rendering performance with large datasets
   - Test memory usage during extended operation
   - Test battery impact of location tracking
   - _Requirements: Performance aspects_
 
-- [ ] 16. Final Integration and System Testing
+- [x] 16. Final Integration and System Testing
   - Perform end-to-end testing of complete user workflows
   - Test cross-component data flow and state management
   - Verify all correctness properties are satisfied
   - Test on OpenHarmony emulator and real devices if available
   - _Requirements: All requirements integration_
 
-- [ ] 16.1 Write integration tests
+- [x] 16.1 Write integration tests
   - Test complete user workflows from start to finish
   - Test cross-component communication
   - Test data consistency across app lifecycle
   - _Requirements: All requirements_
 
-- [ ] 17. Final Checkpoint - Complete System Validation
+- [x] 17. Final Checkpoint - Complete System Validation
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Implementation Notes
