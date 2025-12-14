@@ -1,0 +1,12 @@
+{
+  "name": "entry",
+  "version": "1.0.0",
+  "description": "CityZen Entry Module",
+  "main": "./src/main/ets/entryability/EntryAbility.ets",
+  "author": "CityZen Team",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {
+    "@ohos/hypium": "1.0.16"
+  }
+}
